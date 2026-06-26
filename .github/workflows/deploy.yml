@@ -1,0 +1,121 @@
+name: Deploy to Google Cloud Run
+
+on:
+  push:
+    branches:
+      - main
+      - master
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+permissions:
+  id-token: write
+  contents: write
+
+jobs:
+  ci:
+    name: Build and Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Setup (Restore Dependencies)
+        run: for i in 1 2 3; do dotnet restore --disable-parallel && exit 0; sleep 5; done; exit 1
+
+      - name: Build
+        run: dotnet build
+
+      - name: Test
+        run: dotnet test
+
+      - name: Lint
+        run: ws=$(ls *.slnx *.sln 2>/dev/null | head -n1); ws=${ws:-$(ls *.csproj 2>/dev/null | head -n1)}; if [ -z "$ws" ]; then echo 'no .slnx/.sln/.csproj at repo root — nothing to verify'; exit 0; fi; dotnet format "$ws" --verify-no-changes --no-restore
+
+  deploy:
+    name: Deploy to Google Cloud Run
+    needs: ci
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Google Auth
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker
+        run: gcloud auth configure-docker ${{ vars.GCP_REGION }}-docker.pkg.dev --quiet
+
+      - name: Build and Push Container Image
+        run: |
+          IMAGE_TAG="${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.GCP_REGISTRY_NAME }}/${{ github.event.repository.name }}:${{ github.sha }}"
+          docker build -t "$IMAGE_TAG" -f Dockerfile .
+          docker push "$IMAGE_TAG"
+
+      - name: Deploy to Cloud Run
+        id: deploy
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: ${{ github.event.repository.name }}
+          region: ${{ vars.GCP_REGION }}
+          image: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.GCP_REGISTRY_NAME }}/${{ github.event.repository.name }}:${{ github.sha }}
+          flags: '--allow-unauthenticated'
+
+      - name: Allow public (unauthenticated) invocation
+        env:
+          SERVICE: ${{ github.event.repository.name }}
+          REGION: ${{ vars.GCP_REGION }}
+          PROJECT: ${{ vars.GCP_PROJECT_ID }}
+        run: gcloud run services add-iam-policy-binding "$SERVICE" --region="$REGION" --project="$PROJECT" --member="allUsers" --role="roles/run.invoker"
+
+      - name: Extract Cloud Run URLs
+        id: urls
+        env:
+          SERVICE: ${{ github.event.repository.name }}
+          REGION: ${{ vars.GCP_REGION }}
+          PROJECT: ${{ vars.GCP_PROJECT_ID }}
+        run: |
+          SVC_JSON=$(gcloud run services describe "$SERVICE" --region="$REGION" --project="$PROJECT" --format=json)
+          URL_STABLE=$(echo "$SVC_JSON" | jq -r '.status.url')
+          URL_REVISION="${{ steps.deploy.outputs.url }}"
+          if [ "$URL_STABLE" = "$URL_REVISION" ] || [ -z "$URL_REVISION" ]; then
+            URL_REVISION=$(echo "$SVC_JSON" | jq -r \
+              --arg stable "$URL_STABLE" \
+              '(.metadata.annotations["run.googleapis.com/urls"] // "[]") | fromjson | .[] | select(. != $stable)' \
+              2>/dev/null | head -n1)
+            URL_REVISION="${URL_REVISION:-$URL_STABLE}"
+          fi
+          echo "URL_STABLE=$URL_STABLE" >> "$GITHUB_ENV"
+          echo "URL_REVISION=$URL_REVISION" >> "$GITHUB_ENV"
+
+      - name: Update README with deployment URLs
+        run: |
+          perl -i -0pe \
+            "s|<!-- DEPLOYMENT_URL_START -->.*?<!-- DEPLOYMENT_URL_END -->|<!-- DEPLOYMENT_URL_START -->\n**Stable (corporate-proxy-safe):** [$URL_STABLE]($URL_STABLE)\n**Revision:** [$URL_REVISION]($URL_REVISION)\n<!-- DEPLOYMENT_URL_END -->|s" \
+            README.md || true
+          if ! grep -q "DEPLOYMENT_URL_START" README.md; then
+            printf '\n## 🚀 Live Deployment\n<!-- DEPLOYMENT_URL_START -->\n**Stable (corporate-proxy-safe):** [%s](%s)\n**Revision:** [%s](%s)\n<!-- DEPLOYMENT_URL_END -->\n' \
+              "$URL_STABLE" "$URL_STABLE" "$URL_REVISION" "$URL_REVISION" >> README.md
+          fi
+          if git diff --quiet README.md; then
+            echo "README deployment URLs already current; nothing to do."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          git commit -m "docs: update live deployment URLs [skip ci]"
+          git push origin HEAD:"${{ github.event.repository.default_branch }}"
