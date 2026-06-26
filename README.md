@@ -63,6 +63,8 @@ Apache 2.0 © 2026 The Authors
 
 ## Deployment
 <!-- DEPLOYMENT_URL_START -->
+**Stable (corporate-proxy-safe):** [https://rest-api-echo-dotnet-nconsawizq-lm.a.run.app](https://rest-api-echo-dotnet-nconsawizq-lm.a.run.app)
+**Revision:** [https://rest-api-echo-dotnet-60009279996.europe-central2.run.app](https://rest-api-echo-dotnet-60009279996.europe-central2.run.app)
 <!-- DEPLOYMENT_URL_END -->
 
 <!-- RELEASE_URL_START -->
