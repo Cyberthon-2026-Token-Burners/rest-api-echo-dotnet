@@ -1,5 +1,6 @@
 // Entry point: reads PORT env var, binds Kestrel to 0.0.0.0:PORT, exposes GET /healthz.
 using System.Net;
+using EchoServer.Api.Middleware;
 
 var port = 8080;
 var portEnv = Environment.GetEnvironmentVariable("PORT");
@@ -19,6 +20,8 @@ builder.WebHost.ConfigureKestrel(options =>
 });
 
 var app = builder.Build();
+
+app.UseMiddleware<ControlHeaderMiddleware>();
 
 app.MapGet("/healthz", () => Results.Content("OK", "text/plain"));
 

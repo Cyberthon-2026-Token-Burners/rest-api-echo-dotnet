@@ -4,6 +4,7 @@ A lightweight, high-performance, and completely stateless .NET REST API echo ser
 
 ## Features
 - **Unauthenticated Health Checks**: Immediate status endpoint under `/healthz` returning plain-text "OK".
+- **Dynamic Delay & HTTP Status Control**: Inject request headers (`X-Echo-Status` and `X-Echo-Delay-ms`) to dynamically configure server latencies and response statuses for simulation and testing.
 - **Flexible Environment Configuration**: Automatically binds Kestrel to listen on `0.0.0.0` based on the `PORT` environment variable, falling back gracefully to port `8080` if needed.
 - **Stateless Execution**: Explicitly prepared for zero-configuration, horizontally scaling infrastructure.
 
@@ -33,6 +34,11 @@ PORT=8080 dotnet run --project src/EchoServer.Api/EchoServer.Api.csproj
 Verify that the service is running by invoking the health-check:
 ```sh
 curl http://localhost:8080/healthz
+```
+
+To simulate a `418 I'm a teapot` response with a `250ms` delay, attach the custom control headers:
+```sh
+curl -i -H "X-Echo-Status: 418" -H "X-Echo-Delay-ms: 250" http://localhost:8080/healthz
 ```
 
 ## Running Tests

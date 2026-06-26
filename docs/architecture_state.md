@@ -5,6 +5,7 @@
 
 ## Active Components
 - **EchoServer.Api (src/EchoServer.Api)**: The primary ASP.NET Core Minimal API hosting project. It configures the HTTP pipeline, extracts port configuration, and serves HTTP requests.
+- **ControlHeaderMiddleware (src/EchoServer.Api/Middleware/ControlHeaderMiddleware.cs)**: Custom ASP.NET Core middleware intercepting request headers early in the execution pipeline to orchestrate non-blocking latency simulation and status code overrides.
 - **EchoServer.Api.Tests (tests/EchoServer.Api.Tests)**: The integration and unit test assembly leveraging xUnit and Microsoft.AspNetCore.Mvc.Testing to verify the application pipeline.
 
 ## Public Interfaces / Signatures
@@ -12,12 +13,18 @@
   - Route: `GET /healthz`
   - Auth: Unauthenticated
   - Response: HTTP 200 OK with `text/plain` content `"OK"`.
+- **Control Headers Agreement**:
+  - `X-Echo-Status`: Optional string representation of a 32-bit integer in the range `[100, 599]`. Customizes the final HTTP status code response.
+  - `X-Echo-Delay-ms`: Optional string representation of a 32-bit integer in the range `[0, 30000]`. Simulates server latency.
 
 ## Design Patterns & Decisions
 - **Minimal APIs**: Lightweight configuration of routing and endpoints directly within `Program.cs` without the overhead of controller classes.
+- **Pipeline Interception Middleware Pattern**: Built custom ASP.NET Core middleware to dynamically alter execution before downstream endpoint routing occurs. Allows high performance validation and O(1) early rejection.
 - **Top-Level Statements**: Modern C# entrypoint pattern.
 - **Exposed Program Entry Class**: A declaration of `public partial class Program { }` at the root of `Program.cs` makes it referenceable by integration test projects utilizing `WebApplicationFactory`.
 
 ## Non-Functional Invariants
 - **Stateless Design**: The server remains stateless and keeps no persistent memory or session records.
+- **Thread Pool Starvation Mitigation**: Forced usage of asynchronous, non-blocking waiting (`await Task.Delay(...)`) to safely park threads during custom latency generation.
+- **Strict Parsing and Order Precedence**: Incoming control headers must be Base-10 32-bit signed integers. Validation assesses status code correctness prior to processing delay ranges. If errors are present, the pipeline immediately short-circuits with a `400 Bad Request` and descriptive error text.
 - **Robust Port Binding**: Kestrel dynamically listens on `0.0.0.0` on the port specified by the `PORT` environment variable. If missing or invalid, it defaults to `8080`. No invalid numeric format can trigger runtime boot crashes.
