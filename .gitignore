@@ -1,0 +1,28 @@
+# Build results (anchored dir patterns — never match a source dir)
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+[Dd]ebugPublic/
+[Rr]eleases/
+artifacts/
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Test results
+[Tt]est[Rr]esult*/
+*.trx
+TestResult.xml
+
+# NuGet
+*.nupkg
+project.lock.json
+project.fragment.lock.json
+
+# Logs
+*.log
