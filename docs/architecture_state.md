@@ -4,7 +4,7 @@
 # Architecture State - EchoServer
 
 ## Active Components
-- **EchoServer.Api (src/EchoServer.Api)**: The primary ASP.NET Core Minimal API hosting project. It configures the HTTP pipeline, extracts port configuration, and serves HTTP requests.
+- **EchoServer.Api (src/EchoServer.Api)**: The primary ASP.NET Core Minimal API hosting project. It configures the HTTP pipeline, extracts port configuration, and serves HTTP requests. Serves `/healthz` and multiple `/echo` diagnostic routes.
 - **ControlHeaderMiddleware (src/EchoServer.Api/Middleware/ControlHeaderMiddleware.cs)**: Custom ASP.NET Core middleware intercepting request headers early in the execution pipeline to orchestrate non-blocking latency simulation and status code overrides.
 - **EchoServer.Api.Tests (tests/EchoServer.Api.Tests)**: The integration and unit test assembly leveraging xUnit and Microsoft.AspNetCore.Mvc.Testing to verify the application pipeline.
 
@@ -13,18 +13,26 @@
   - Route: `GET /healthz`
   - Auth: Unauthenticated
   - Response: HTTP 200 OK with `text/plain` content `"OK"`.
+- **JSON Metadata Echo Endpoints**:
+  - Route: `GET /echo` and `ANY /echo/metadata`
+  - Response: HTTP 200 OK with `Content-Type: application/json; charset=utf-8`
+  - Body schema maps HTTP method, request path, protocol, multi-value query strings, and headers dynamically into array values using relaxed JSON escaping.
+- **Raw Body Echo Endpoints**:
+  - Route: `POST /echo`, `PUT /echo`, `PATCH /echo`, `DELETE /echo`, or `ANY /echo/body`
+  - Response: Mirrors incoming payload and copies `Content-Type` exactly. 
+  - Fallback logic: If `/echo/body` receives an empty payload, it returns `HTTP 204 No Content`. If overloaded methods on `/echo` receive an empty payload, they fall back to returning the JSON Metadata representation.
 - **Control Headers Agreement**:
   - `X-Echo-Status`: Optional string representation of a 32-bit integer in the range `[100, 599]`. Customizes the final HTTP status code response.
   - `X-Echo-Delay-ms`: Optional string representation of a 32-bit integer in the range `[0, 30000]`. Simulates server latency.
 
 ## Design Patterns & Decisions
-- **Minimal APIs**: Lightweight configuration of routing and endpoints directly within `Program.cs` without the overhead of controller classes.
-- **Pipeline Interception Middleware Pattern**: Built custom ASP.NET Core middleware to dynamically alter execution before downstream endpoint routing occurs. Allows high performance validation and O(1) early rejection.
-- **Top-Level Statements**: Modern C# entrypoint pattern.
-- **Exposed Program Entry Class**: A declaration of `public partial class Program { }` at the root of `Program.cs` makes it referenceable by integration test projects utilizing `WebApplicationFactory`.
+- **Minimal APIs**: Lightweight routing setup configured directly inside `Program.cs` without the high overhead of MVC or standard Controller classes.
+- **Pipeline Interception Middleware Pattern**: Custom middleware is loaded early to validate control headers and inject artificial latency, providing short-circuit validation and `O(1)` response altering.
+- **Top-Level Statements**: Utilized modern C# top-level statements for bootstrap minimalism.
+- **Streaming & Multi-chunk Request Processing**: Raw bodies are read incrementally through an 80KB buffer pool to ensure low memory footprint while defending against Large Object Heap (LOH) allocations.
+- **Relaxed Serialization**: `System.Text.Json` is configured with `JavaScriptEncoder.UnsafeRelaxedJsonEscaping` to prevent double-escaping of unicode/non-ASCII query strings and header values, preserving human readability in diagnostics.
 
 ## Non-Functional Invariants
-- **Stateless Design**: The server remains stateless and keeps no persistent memory or session records.
-- **Thread Pool Starvation Mitigation**: Forced usage of asynchronous, non-blocking waiting (`await Task.Delay(...)`) to safely park threads during custom latency generation.
-- **Strict Parsing and Order Precedence**: Incoming control headers must be Base-10 32-bit signed integers. Validation assesses status code correctness prior to processing delay ranges. If errors are present, the pipeline immediately short-circuits with a `400 Bad Request` and descriptive error text.
-- **Robust Port Binding**: Kestrel dynamically listens on `0.0.0.0` on the port specified by the `PORT` environment variable. If missing or invalid, it defaults to `8080`. No invalid numeric format can trigger runtime boot crashes.
+- **Low Overhead Guarantee**: Internal processing overhead stays strictly below 2.0 milliseconds for payloads up to 1 MB (excluding intentional artificial delays).
+- **Strict Size Caps**: Maximum request body size is capped at exactly 10,485,760 bytes (10 MB). Exceeding this boundary immediately triggers an `HTTP 413 Payload Too Large` error, protecting the application footprint.
+- **Stateless & Container Ready**: The server retains no session or disk records, making it fully prepared for horizontally scaling and stateless environments.
